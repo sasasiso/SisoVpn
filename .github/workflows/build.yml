@@ -24,32 +24,23 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Patch app name
+      - name: Patch app name to SisoVPN
         run: |
           find . -name "strings.xml" -exec sed -i 's/v2rayNG/SisoVPN/g' {} \;
           find . -name "strings.xml" -exec sed -i 's/v2RayNG/SisoVPN/g' {} \;
 
-      - name: Patch colors
+      - name: Patch only primary colors (keep missing colors)
         run: |
-          FILE="V2rayNG/app/src/main/res/values/colors.xml"
-          cat > "$FILE" << 'EOF'
-          <?xml version="1.0" encoding="utf-8"?>
-          <resources>
-          <color name="colorPrimary">#F0B90B</color>
-          <color name="colorPrimaryDark">#C49009</color>
-          <color name="colorAccent">#F0B90B</color>
-          <color name="colorBackground">#0B0B0F</color>
-          <color name="colorSurface">#13131A</color>
-          <color name="colorOnPrimary">#0B0B0F</color>
-          <color name="colorOnSurface">#EEEEF8</color>
-          <color name="md_theme_light_primary">#F0B90B</color>
-          <color name="md_theme_light_onPrimary">#0B0B0F</color>
-          <color name="md_theme_light_background">#0B0B0F</color>
-          <color name="md_theme_dark_primary">#F0B90B</color>
-          <color name="md_theme_dark_onPrimary">#0B0B0F</color>
-          <color name="md_theme_dark_background">#0B0B0F</color>
-          </resources>
-          EOF
+          COLORS="V2rayNG/app/src/main/res/values/colors.xml"
+          sed -i 's|<color name="colorPrimary">.*</color>|<color name="colorPrimary">#F0B90B</color>|g' "$COLORS"
+          sed -i 's|<color name="colorPrimaryDark">.*</color>|<color name="colorPrimaryDark">#C49009</color>|g' "$COLORS"
+          sed -i 's|<color name="colorAccent">.*</color>|<color name="colorAccent">#F0B90B</color>|g' "$COLORS"
+          sed -i 's|<color name="md_theme_light_primary">.*</color>|<color name="md_theme_light_primary">#F0B90B</color>|g' "$COLORS"
+          sed -i 's|<color name="md_theme_dark_primary">.*</color>|<color name="md_theme_dark_primary">#F0B90B</color>|g' "$COLORS"
+          sed -i 's|<color name="md_theme_light_background">.*</color>|<color name="md_theme_light_background">#0B0B0F</color>|g' "$COLORS"
+          sed -i 's|<color name="md_theme_dark_background">.*</color>|<color name="md_theme_dark_background">#0B0B0F</color>|g' "$COLORS"
+          sed -i 's|<color name="md_theme_light_surface">.*</color>|<color name="md_theme_light_surface">#13131A</color>|g' "$COLORS"
+          sed -i 's|<color name="md_theme_dark_surface">.*</color>|<color name="md_theme_dark_surface">#13131A</color>|g' "$COLORS"
 
       - name: Build APK
         run: |
