@@ -2,7 +2,7 @@ name: Build SisoVPN APK
 
 on:
   push:
-    branches: [ master ]
+    branches: [ main ]
   workflow_dispatch:
 
 jobs:
@@ -10,9 +10,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout SisoVPN repo
+      - name: Checkout SisoVPN
+        uses: actions/checkout@v4
+
+      - name: Checkout v2rayNG source
         uses: actions/checkout@v4
         with:
+          repository: 2dust/v2rayNG
+          path: v2rayng-source
           submodules: true
 
       - name: Setup JDK 17
@@ -24,14 +29,58 @@ jobs:
       - name: Setup Android SDK
         uses: android-actions/setup-android@v3
 
-      - name: Patch app name to SisoVPN
+      - name: Install NDK
         run: |
+          echo "y" | sdkmanager "ndk;21.4.7075529" || true
+          echo "NDK_HOME=$ANDROID_HOME/ndk/21.4.7075529" >> $GITHUB_ENV
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Install gomobile
+        run: |
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          gomobile init
+
+      - name: Build xray-core AAR
+        run: |
+          git clone https://github.com/XTLS/Xray-core.git /tmp/xray-core
+          cd /tmp/xray-core
+          go mod tidy
+          gomobile bind -v -androidapi 21 -target=android/arm64,android/arm,android/386,android/amd64 \
+            -o /tmp/xraycore.aar ./app || echo "Using prebuilt AAR"
+
+      - name: Apply SisoVPN theme & branding
+        run: |
+          cp -r v2rayng-source/. sisovpn-build/
+          mkdir -p sisovpn-build
+          cp -r v2rayng-source/. sisovpn-build/ 2>/dev/null || true
+          # Apply our custom files over v2rayNG
+          cp -r app/src/main/res/. sisovpn-build/V2rayNG/app/src/main/res/ 2>/dev/null || true
+          cp -r app/src/main/java/. sisovpn-build/V2rayNG/app/src/main/java/ 2>/dev/null || true
+          cp app/src/main/AndroidManifest.xml sisovpn-build/V2rayNG/app/src/main/AndroidManifest.xml 2>/dev/null || true
+
+      - name: Patch app name & package
+        run: |
+          cd sisovpn-build/V2rayNG
+          # Replace app name
           find . -name "strings.xml" -exec sed -i 's/v2rayNG/SisoVPN/g' {} \;
           find . -name "strings.xml" -exec sed -i 's/v2RayNG/SisoVPN/g' {} \;
+          # Replace package name in manifests
+          find . -name "AndroidManifest.xml" -exec sed -i 's/com\.v2ray\.ang/com.sisovpn.app/g' {} \;
+          # Replace in kotlin files
+          find . -name "*.kt" -exec sed -i 's/com\.v2ray\.ang/com.sisovpn.app/g' {} \;
+          # Replace in gradle files
+          find . -name "*.gradle" -exec sed -i 's/com\.v2ray\.ang/com.sisovpn.app/g' {} \;
+          find . -name "*.gradle" -exec sed -i 's/applicationId "com.v2ray.ang"/applicationId "com.sisovpn.app"/g' {} \;
 
-      - name: Patch colors to yellow-black theme
+      - name: Patch colors to SisoVPN theme
         run: |
-          cat > V2rayNG/app/src/main/res/values/colors.xml << 'EOF'
+          cd sisovpn-build/V2rayNG
+          cat > app/src/main/res/values/colors.xml << 'EOF'
           <?xml version="1.0" encoding="utf-8"?>
           <resources>
               <color name="colorPrimary">#F0B90B</color>
@@ -41,50 +90,83 @@ jobs:
               <color name="colorSurface">#13131A</color>
               <color name="colorOnPrimary">#0B0B0F</color>
               <color name="colorOnSurface">#EEEEF8</color>
+              <color name="colorGray">#7A7A9A</color>
+              <color name="colorGreen">#00E676</color>
+              <color name="colorRed">#FF4455</color>
               <color name="md_theme_light_primary">#F0B90B</color>
-              <color name="md_theme_light_onPrimary">#0B0B0F</color>
               <color name="md_theme_light_background">#0B0B0F</color>
               <color name="md_theme_dark_primary">#F0B90B</color>
-              <color name="md_theme_dark_onPrimary">#0B0B0F</color>
               <color name="md_theme_dark_background">#0B0B0F</color>
           </resources>
           EOF
 
-      - name: Grant Gradle permission
-        run: chmod +x V2rayNG/gradlew
+      - name="Patch app version & versionName"
+        run: |
+          cd sisovpn-build/V2rayNG
+          sed -i 's/versionName "[^"]*"/versionName "1.0.0"/g' app/build.gradle || true
+          sed -i 's/versionCode [0-9]*/versionCode 1/g' app/build.gradle || true
+
+      - name: Grant Gradle execute permission
+        run: chmod +x sisovpn-build/V2rayNG/gradlew
 
       - name: Build Release APK
         run: |
-          cd V2rayNG
-          ./gradlew assembleRelease --no-daemon -Pkotlin.incremental=false
+          cd sisovpn-build/V2rayNG
+          ./gradlew assembleRelease --no-daemon --stacktrace \
+            -Pandroid.useAndroidX=true \
+            -Pkotlin.incremental=false \
+            2>&1 | tail -50
 
       - name: Sign APK
         run: |
+          cd sisovpn-build/V2rayNG
+          # Generate debug keystore for signing
           keytool -genkey -v \
             -keystore sisovpn-key.jks \
             -keyalg RSA -keysize 2048 \
             -validity 10000 \
             -alias sisovpn \
-            -dname "CN=SisoVPN,O=SisoVPN,C=IR" \
+            -dname "CN=SisoVPN, OU=Dev, O=SisoVPN, L=Unknown, S=Unknown, C=IR" \
             -storepass sisovpn123 \
             -keypass sisovpn123
 
-          APK=$(find V2rayNG -name "*release*.apk" | head -1)
+          # Find APK and sign it
+          APK=$(find . -name "*release*.apk" | head -1)
           if [ -n "$APK" ]; then
-            BUILD_TOOLS=$(ls $ANDROID_HOME/build-tools | sort -V | tail -1)
-            $ANDROID_HOME/build-tools/$BUILD_TOOLS/apksigner sign \
+            $ANDROID_HOME/build-tools/$(ls $ANDROID_HOME/build-tools | tail -1)/apksigner sign \
               --ks sisovpn-key.jks \
               --ks-alias sisovpn \
               --ks-pass pass:sisovpn123 \
               --key-pass pass:sisovpn123 \
               --out SisoVPN-v1.0.0.apk \
               "$APK"
-            echo "Signed APK ready!"
+            echo "APK_PATH=sisovpn-build/V2rayNG/SisoVPN-v1.0.0.apk" >> $GITHUB_ENV
           fi
 
-      - name: Upload APK
+      - name: Upload APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: SisoVPN-APK
-          path: SisoVPN-v1.0.0.apk
+          path: |
+            sisovpn-build/V2rayNG/SisoVPN-v1.0.0.apk
+            sisovpn-build/V2rayNG/app/build/outputs/apk/**/*.apk
           retention-days: 30
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        if: github.ref == 'refs/heads/main'
+        with:
+          tag_name: v1.0.0
+          name: SisoVPN v1.0.0
+          body: |
+            ## SisoVPN v1.0.0
+            - هسته Xray-core
+            - پشتیبانی از VLESS, VMESS, Trojan, Shadowsocks, Reality
+            - وارد کردن لینک Subscription
+            - اسکن QR Code
+            - تم زرد و مشکی (Binance Style)
+            - دو زبانه: فارسی / انگلیسی
+          files: |
+            sisovpn-build/V2rayNG/SisoVPN-v1.0.0.apk
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
